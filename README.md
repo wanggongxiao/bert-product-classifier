@@ -121,6 +121,28 @@ curl -X POST http://localhost:8000/predict \
 | `LOG_DIR` | 训练日志目录 `logs/` |
 | `MODELS_DIR` | 模型保存目录 `models/` |
 | `PRE_TRAINED_DIR` | 预训练模型目录 `pretrained/` |
+| `PRE_TRAINED_MODEL_NAME` | 预训练模型名称，默认 `bert-base-chinese` |
+
+---
+
+## 模块说明
+
+### `src/configuration/config.py`
+集中管理所有路径常量，避免散落在代码各处。使用 `pathlib.Path`，跨平台兼容。
+
+### `src/preprocess/process.py`
+数据预处理主流程，按职责拆分为 6 个小函数：
+- `load_raw_dataset()` — 加载原始 TSV
+- `clean_dataset()` — 过滤空值
+- `build_labels()` — 构建标签集合并转为 `ClassLabel`
+- `save_labels()` — 保存 `labels.json`
+- `tokenize_dataset()` — 分词 + 添加 `labels` 字段
+- `save_dataset()` — 保存为 HuggingFace Dataset 格式
+
+每个步骤都通过 `logger` 输出进度，错误可追溯。
+
+### `src/preprocess/dataset.py`
+提供 `to_dataloader()` 与 `get_label_mapping()` 两个工具函数，供训练 / 推理脚本复用，避免重复样板代码。
 
 ---
 
@@ -129,6 +151,7 @@ curl -X POST http://localhost:8000/predict \
 - [x] 项目结构搭建
 - [x] 全局配置（`config.py`）
 - [x] 数据预处理脚本（`process.py`）
+- [x] Dataset 工具函数（`dataset.py`）
 - [ ] 模型训练脚本
 - [ ] 模型评估脚本
 - [ ] RESTful API 服务
