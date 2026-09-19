@@ -9,6 +9,10 @@
 import logging
 import sys
 from pathlib import Path
+from transformers import AutoTokenizer, AutoModelForMaskedLM
+
+
+model = AutoModelForMaskedLM.from_pretrained("google-bert/bert-base-chinese", device_map="auto")
 
 # 确保 src/ 目录在导入路径中，使 `from configuration import config` 可用
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'src'))
@@ -69,23 +73,15 @@ def clean_dataset(dataset_dict):
 
 def build_labels(dataset_dict):
     """
-    从训练集中提取全部 label，排序后转为 ClassLabel 类型。
-
-    同时把所有 split 中的 label 列转换为 ClassLabel。
-
-    Args:
-        dataset_dict: 清洗后的 DatasetDict
-
-    Returns:
-        tuple: (dataset_dict, sorted_labels)
+        使用 class_encode_column 将字符串类型的 label 列编码为 ClassLabel
     """
     logger.info('开始构建标签集合...')
-    # 训练集上出现的所有 label，去重并排序，保证映射稳定
-    all_labels = sorted(set(dataset_dict['train']['label']))
-    logger.info('共发现 %d 个类别：%s', len(all_labels), all_labels)
 
     # 将所有 split 的 label 列转换为 ClassLabel，便于后续模型训练
-    dataset_dict = dataset_dict.cast_column('label', ClassLabel(names=all_labels))
+    dataset_dict = dataset_dict.class_encode_column('label')
+    # 转换完成后，我们可以直接从 features 中提取排好序的 label 列表
+    all_labels = dataset_dict['train'].features['label'].names
+    logger.info('共发现 %d 个类别：%s', len(all_labels), all_labels)
     return dataset_dict, all_labels
 
 
@@ -115,9 +111,7 @@ def tokenize_dataset(dataset_dict):
         datasets.DatasetDict: 分词后的 DatasetDict
     """
     logger.info('加载分词器：%s', config.PRE_TRAINED_MODEL_NAME)
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.PRE_TRAINED_DIR / config.PRE_TRAINED_MODEL_NAME
-    )
+    tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-chinese")
 
     def tokenize(batch):
         # 对 text_a 字段进行分词；truncation=True 防止超出最大长度
