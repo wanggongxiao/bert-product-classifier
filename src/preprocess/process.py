@@ -12,7 +12,6 @@ from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 
-model = AutoModelForMaskedLM.from_pretrained("google-bert/bert-base-chinese", device_map="auto")
 
 # 确保 src/ 目录在导入路径中，使 `from configuration import config` 可用
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'src'))

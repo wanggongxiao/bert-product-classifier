@@ -1,167 +1,109 @@
 # bert-product-classifier
 
-一个基于 BERT 的中文商品标题分类系统，支持数据预处理、模型训练、评估和 RESTful API 推理。
-
----
-
-## 项目目标
-
-利用预训练的 `bert-base-chinese` 模型，对中文商品标题进行多分类（例如：服饰 / 数码 / 食品 等）。
-整个流程包含四个阶段：
-
-1. **数据预处理** — 读取原始数据、清洗、划分标签、分词、保存为 HuggingFace Dataset
-2. **模型训练** — 基于 BERT 微调分类模型
-3. **模型评估** — 在测试集上评估准确率、精确率、召回率等指标
-4. **API 推理** — 提供 RESTful 接口供线上调用
-
----
+基于 `bert-base-chinese` 的中文商品标题分类项目，包含数据预处理、模型训练、评估和 RESTful API 推理模块。
 
 ## 项目结构
 
-```
+```text
 bert-product-classifier/
-├── README.md                  # 项目说明（本文件）
+├── README.md
 ├── src/
-│   ├── configuration/
-│   │   └── config.py          # 全局路径与配置
-│   └── preprocess/
-│       └── process.py         # 数据预处理主流程
+│   ├── configuration/config.py  # 路径和模型配置
+│   ├── preprocess/process.py    # 原始 TSV 数据预处理
+│   ├── preprocess/dataset.py    # Dataset 和 DataLoader 工具
+│   └── runner/train.py          # 训练配置和训练器
 ├── data/
-│   ├── raw/                   # 原始数据（train.txt / valid.txt / test.txt）
-│   └── processed/             # 预处理后的数据 + labels.json
-├── pretrained/                # 预训练模型存放目录（如 bert-base-chinese）
-├── models/                    # 微调后的模型保存目录
-└── logs/                      # 训练日志目录
+│   ├── raw/                     # train.txt、valid.txt、test.txt
+│   └── processed/               # 处理后的 Dataset 和 labels.json
+├── pretrained/                  # 预训练模型目录
+├── models/                      # 微调模型输出目录
+└── logs/                        # TensorBoard 日志目录
 ```
-
----
 
 ## 数据格式
 
-原始数据采用 **TSV** 格式（两列：`label\ttext_a`），分为三个文件：
+原始数据使用 TSV 格式，每行包含 `label\ttext_a`：
 
-- `data/raw/train.txt`  — 训练集
-- `data/raw/valid.txt`  — 验证集
-- `data/raw/test.txt`   — 测试集
-
-示例：
-
-```
-服饰	男士纯棉短袖T恤
-数码	苹果iPhone 15 Pro手机壳
-食品	原味坚果混合装
+```text
+服装\t男士纯棉短袖T恤
+数码\t苹果 iPhone 15 Pro 手机壳
+食品\t原味坚果混合装
 ```
 
----
+数据文件放在 `data/raw/` 下：`train.txt`、`valid.txt` 和 `test.txt`。
 
-## 环境依赖
+## 安装依赖
 
 ```bash
-pip install datasets transformers torch scikit-learn fastapi uvicorn
+pip install datasets transformers torch scikit-learn tensorboard tqdm
 ```
-
----
 
 ## 使用方法
 
-### 1. 数据预处理
-
-将 `train.txt` / `valid.txt` / `test.txt` 放入 `data/raw/` 目录，然后运行：
+### 数据预处理
 
 ```bash
 python -m src.preprocess.process
 ```
 
-该脚本会完成以下工作：
+该命令会读取原始 TSV，清洗空值，建立 `ClassLabel`，使用 BERT tokenizer 编码，并将结果保存到 `data/processed/`。
 
-- 加载原始 CSV/TXT 数据
-- 过滤空值
-- 构建标签集合并转换为 `ClassLabel`
-- 保存 `labels.json`
-- 使用 `bert-base-chinese` 分词器对文本进行编码
-- 将处理后的数据集保存到 `data/processed/`
+### 模型训练
 
-### 2. 模型训练
+训练配置和训练器位于 `src/runner/train.py`。可通过 `TrainingConfig` 设置训练超参数：
 
-（待实现：`src/train/train.py`）
+```python
+from src.runner.train import TrainingConfig
 
-### 3. 模型评估
+training_config = TrainingConfig(
+    epochs=10,
+    batch_size=16,
+    learning_rate=5e-5,
+    output_dir='./models',
+    log_dir='./logs',
+    save_steps=100,
+    early_stop_metric='loss',
+    early_stop_patience=3,
+    use_amp=True,
+)
+```
 
-（待实现：`src/evaluate/evaluate.py`）
+当前 `train` 类已完成设备、模型、数据集、优化器、TensorBoard 和 AMP 等训练组件的初始化；完整的训练循环、验证、保存和早停逻辑仍在完善中。
 
-### 4. API 推理
+### 模型评估和 API 推理
 
-（待实现：`src/api/app.py`）
-
-启动方式（计划）：
+评估模块和 API 模块尚未完成。计划使用以下命令启动 API：
 
 ```bash
 uvicorn src.api.app:app --host 0.0.0.0 --port 8000
 ```
 
-调用示例：
+## 路径配置
 
-```bash
-curl -X POST http://localhost:8000/predict \
-     -H "Content-Type: application/json" \
-     -d '{"text": "男士纯棉短袖T恤"}'
-```
+统一配置位于 `src/configuration/config.py`：
 
----
-
-## 关键路径配置
-
-所有路径都集中在 `src/configuration/config.py`：
-
-| 变量 | 含义 |
+| 配置项 | 说明 |
 |---|---|
 | `ROOT_PATH` | 项目根目录 |
-| `RAW_DATA_DIR` | 原始数据目录 `data/raw/` |
-| `PROCESSED_DATA_DIR` | 预处理后数据目录 `data/processed/` |
-| `LOG_DIR` | 训练日志目录 `logs/` |
-| `MODELS_DIR` | 模型保存目录 `models/` |
-| `PRE_TRAINED_DIR` | 预训练模型目录 `pretrained/` |
-| `PRE_TRAINED_MODEL_NAME` | 预训练模型名称，默认 `bert-base-chinese` |
-
----
-
-## 模块说明
-
-### `src/configuration/config.py`
-集中管理所有路径常量，避免散落在代码各处。使用 `pathlib.Path`，跨平台兼容。
-
-### `src/preprocess/process.py`
-数据预处理主流程，按职责拆分为 6 个小函数：
-- `load_raw_dataset()` — 加载原始 TSV
-- `clean_dataset()` — 过滤空值
-- `build_labels()` — 构建标签集合并转为 `ClassLabel`
-- `save_labels()` — 保存 `labels.json`
-- `tokenize_dataset()` — 分词 + 添加 `labels` 字段
-- `save_dataset()` — 保存为 HuggingFace Dataset 格式
-
-每个步骤都通过 `logger` 输出进度，错误可追溯。
-
-### `src/preprocess/dataset.py`
-提供 `to_dataloader()` 与 `get_label_mapping()` 两个工具函数，供训练 / 推理脚本复用，避免重复样板代码。
-
----
+| `RAW_DATA_DIR` | 原始数据目录 |
+| `PROCESSED_DATA_DIR` | 处理后数据目录 |
+| `LOG_DIR` | 训练日志目录 |
+| `MODELS_DIR` | 模型输出目录 |
+| `PRE_TRAINED_DIR` | 预训练模型目录 |
+| `PRE_TRAINED_MODEL_NAME` | 默认值为 `bert-base-chinese` |
 
 ## 当前进度
 
-- [x] 项目结构搭建
-- [x] 全局配置（`config.py`）
-- [x] 数据预处理脚本（`process.py`）
-- [x] Dataset 工具函数（`dataset.py`）
-- [ ] 模型训练脚本
+- [x] 项目结构和全局配置
+- [x] 数据预处理脚本
+- [x] Dataset/DataLoader 工具
+- [x] 训练配置和训练器初始化框架（`src/runner/train.py`）
+- [ ] 完整模型训练循环
 - [ ] 模型评估脚本
 - [ ] RESTful API 服务
 
----
+## 后续计划
 
-## 后续改进方向
-
-1. **修复 `process.py` 中已知的代码 bug**（例如 `ClassLabel` 拼写、`sorted` 函数、`RAW_DATA_DIR` 等）
-2. 增加训练 / 评估 / 推理模块
-3. 增加单元测试与 CI
-4. 编写 Docker 镜像，支持一键部署
-5. 增加模型版本管理与推理性能监控
+1. 完成训练循环、验证、断点保存和早停。
+2. 增加准确率、F1 等评估指标和测试脚本。
+3. 增加 RESTful API、单元测试和 CI。
