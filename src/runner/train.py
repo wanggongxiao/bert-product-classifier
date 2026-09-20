@@ -70,8 +70,44 @@ class train:
     def _get_dataloader(self , dataset):
         """得到dataloader"""
         dataset.set_format(ytpe='torch')
+        generator = torch.Generator()
+        generator.manual_seed(42)
+        return DataLoader(dataset = dataset, batch_size=self.training_config.batch_size, shuffle=True, collate_fn=self.collate_fn, generator=generator)   
         
 
+    def train(self):
+        """训练数据"""
 
+        # 加载检查点
+
+
+    def save_checkpoint(self):
+        """保存检查点"""
+        checkpoint_path = Path(self.training_config.output_dir) / 'checkpoint.pt'
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'step': self.step,
+            'early_stop_score': self.early_stop_score,
+            'early_stop_counter': self.early_stop_counter,
+            'scaler_state_dict': self.scaler.state_dict()
+        }
+        torch.save(checkpoint, checkpoint_path)
+        print(f"Saved checkpoint to {checkpoint_path}")   
+         
+    def _load_checkpoint(self):
+        """加载检查点"""
+        checkpoint_path = Path(self.training_config.output_dir) / 'checkpoint.pt'
+        if checkpoint_path.exists():
+            checkpoint = torch.load(checkpoint_path)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.step = checkpoint['step']
+            self.early_stop_score = checkpoint['early_stop_score']
+            self.early_stop_counter = checkpoint['early_stop_counter']
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            print(f"Loaded checkpoint from {checkpoint_path}")
+        else:
+            print(f"No checkpoint found at {checkpoint_path}, starting from scratch.")
 
 
