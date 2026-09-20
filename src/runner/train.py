@@ -79,7 +79,28 @@ class train:
         """训练数据"""
 
         # 加载检查点
+        self._load_checkpoint()
+        current_step = 0
+        dataloader = self._get_dataloader(self.train_dataset)
+        for epo
 
+    
+    def train_one_epoch(self, inputs):
+        """训练每个Batch"""
+        self.model.train()
+        epoch_loss = 0.0
+        inputs = {k:v.to(self.device) for k,v in inputs.items()}
+        # 添加混合精度
+        with torch.autocast(device_type='cuda', enabled=self.training_config.use_amp):
+            outputs = self.model(**inputs)
+            loss = outputs.loss
+        # 反向传播
+        self.scaler.scale(loss).backward()
+        # 更新参数
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        self.optimizer.zero_grad()
+        return loss.item()
 
     def save_checkpoint(self):
         """保存检查点"""
@@ -94,7 +115,7 @@ class train:
         }
         torch.save(checkpoint, checkpoint_path)
         print(f"Saved checkpoint to {checkpoint_path}")   
-         
+
     def _load_checkpoint(self):
         """加载检查点"""
         checkpoint_path = Path(self.training_config.output_dir) / 'checkpoint.pt'
