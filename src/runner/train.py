@@ -152,11 +152,7 @@ class train:
             print(f"No checkpoint found at {checkpoint_path}, starting from scratch.")
 
 
-    def compute_metrics(self, preds, labels)->dict:
-        """计算评估指标"""
-        accuracy = accuracy_score(labels, preds)
-        f1 = f1_score(labels, preds, average='weighted')
-        return {'accuracy': accuracy, 'f1': f1}
+
     def evaluate(self):
         """评估模型"""
         self.model.eval()
@@ -179,3 +175,35 @@ class train:
         # 计算评估指标
         metrics = self.compute_metrics(all_preds, all_labels)
         return{'loss': loss, **metrics}
+
+def train():
+    # devic
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # 分词器
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+
+    # 数据集
+    train_dataset = dataset(config.train_file, tokenizer)
+    vaild_dataset = dataset(config.valid_file, tokenizer)
+    collate_fn = DataCollatorWithPadding(tokenizer=tokenizer,padding = True, return_tensors='pt')
+
+    # 模型
+    id2label = {index:label for index, label in enumerate(config.labels)}
+    label2id = {label:index for index, label in enumerate(config.labels)}
+
+    model = AutoModelForSequenceClassification.from_pretrained(config.model_name, num_labels=len(config.labels), id2label=id2label, label2id=label2id)
+
+    def compute_metrics(self, preds, labels)->dict:
+        """计算评估指标"""
+        accuracy = accuracy_score(labels, preds)
+        f1 = f1_score(labels, preds, average='weighted')
+        return {'accuracy': accuracy, 'f1': f1}
+    training_config = TrainingConfig(
+        output_dir= config.MODELS_DIR,log_dir=config.LOGS_DIR
+    )
+    trainer = train(device=device, model=model, train_dataset=train_dataset, valid_dataset=vaild_dataset, collate_fn=collate_fn, compute_metrics=compute_metrics, training_config=training_config)  
+    trainer.train()
+
+if __name__ == '__main__':
+    train()
