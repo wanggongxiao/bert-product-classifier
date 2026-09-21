@@ -87,14 +87,22 @@ class train:
             for inputs in tqdm(dataloader, desc=f"Training Epoch {epoch}"):
                 loss = self.train_one_epoch(inputs)
                 current_step += 1
-                self.step += 1
                 # tensorboard记录loss
                 self.writer.add_scalar('train/loss', loss, current_step)
 
+
+                # 验证评估
+                metrics = self.evaluate()
+                metrics_str = '| '.join([f"{k}: {v:.4f}" for k, v in metrics.items()])
+                tqdm.write(f"Step {current_step} | {metrics_str}")
+                # 早停
+                if self._should_early_stop(metrics):
+                    tqdm.write("早停")
+                    return
                 # 保存检查点
                 if current_step % self.training_config.save_steps == 0:
                     self.save_checkpoint()
-            
+            self.step += 1
 
     
     def train_one_epoch(self, inputs):
@@ -144,3 +152,30 @@ class train:
             print(f"No checkpoint found at {checkpoint_path}, starting from scratch.")
 
 
+    def compute_metrics(self, preds, labels)->dict:
+        """计算评估指标"""
+        accuracy = accuracy_score(labels, preds)
+        f1 = f1_score(labels, preds, average='weighted')
+        return {'accuracy': accuracy, 'f1': f1}
+    def evaluate(self):
+        """评估模型"""
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+        total_loss = 0.0
+        dataloader = self._get_dataloader(self.valid_dataset)
+        for inputs in tqdm(dataloader, desc="Evaluating"):
+            inputs = {k:v.to(self.device) for k,v in inputs.items()}
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                loss = outputs.loss
+                total_loss += loss.item()
+                # 预测结果
+                preds = torch.argmax(outputs.logits, dim=-1)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(inputs['labels'].cpu().numpy())
+        loss = total_loss / len(dataloader)
+
+        # 计算评估指标
+        metrics = self.compute_metrics(all_preds, all_labels)
+        return{'loss': loss, **metrics}
