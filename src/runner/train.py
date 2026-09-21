@@ -82,13 +82,25 @@ class train:
         self._load_checkpoint()
         current_step = 0
         dataloader = self._get_dataloader(self.train_dataset)
-        for epo
+        for epoch in range(1,1+self.training_config.epochs):
+            print(f"epoch {epoch}/{self.training_config.eporchs}")
+            for inputs in tqdm(dataloader, desc=f"Training Epoch {epoch}"):
+                loss = self.train_one_epoch(inputs)
+                current_step += 1
+                self.step += 1
+                # tensorboard记录loss
+                self.writer.add_scalar('train/loss', loss, current_step)
+
+                # 保存检查点
+                if current_step % self.training_config.save_steps == 0:
+                    self.save_checkpoint()
+            
 
     
     def train_one_epoch(self, inputs):
         """训练每个Batch"""
         self.model.train()
-        epoch_loss = 0.0
+        loss = 0.0
         inputs = {k:v.to(self.device) for k,v in inputs.items()}
         # 添加混合精度
         with torch.autocast(device_type='cuda', enabled=self.training_config.use_amp):
