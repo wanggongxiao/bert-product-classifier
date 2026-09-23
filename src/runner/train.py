@@ -12,7 +12,8 @@ from tqdm import tqdm
 from transformers import AutoTokenizer , AutoModelForSequenceClassification , DataCollatorWithPadding
 
 from configuration import config
-from preprocess import dataset
+from preprocess.dataset import get_dataset
+import json
 
 
 @dataclass
@@ -27,7 +28,7 @@ class TrainingConfig:
     early_stop_patience: int = 3
     use_amp: bool = True
 
-class train:
+class Trainer:
     """训练类"""
     def __init__(self,device,
                  model,
@@ -41,7 +42,7 @@ class train:
 
         # 设置设备和模型
         self.device = device
-        self.model = model
+        self.model = model.to(device)
         # 数据集和数据集整理器
         self.collate_fn = collate_fn
         self.compute_metrics = compute_metrics
@@ -57,23 +58,46 @@ class train:
         # 全局的step
         self.step = 0
         # tensorboard
-        self.writer = SummaryWriter(log_dir=training_config.log_dir) / time.strftime("%Y%m%d-%H%M%S")
+        run_dir = Path(training_config.log_dir) / time.strftime("%Y%m%d-%H%M%S")
+        self.writer = SummaryWriter(log_dir=str(run_dir))
 
         # 早停
         self.early_stop_score = -float('inf')
         self.early_stop_counter = 0
 
         # amp
-        self.scaler = torch.cuda.amp.GradScaler('cuda', enabled=training_config.use_amp)
+        self.amp_enabled = (
+                training_config.use_amp and self.device.type == 'cuda'
+        )
 
+        self.scaler = torch.amp.GradScaler(
+            device=self.device.type,
+            enabled=self.amp_enabled,
+        )
 
     def _get_dataloader(self , dataset):
         """得到dataloader"""
-        dataset.set_format(ytpe='torch')
+        dataset.set_format(type='torch')
         generator = torch.Generator()
         generator.manual_seed(42)
-        return DataLoader(dataset = dataset, batch_size=self.training_config.batch_size, shuffle=True, collate_fn=self.collate_fn, generator=generator)   
-        
+        return DataLoader(dataset = dataset, batch_size=self.training_config.batch_size, shuffle=True, collate_fn=self.collate_fn, generator=generator)
+
+    def _should_stop(self, metrics) -> bool:
+        """判断是否早停"""
+        metric = metrics[self.training_config.early_stop_metric]
+        score = -metric if self.training_config.early_stop_metric == 'loss' else metric
+        if score > self.early_stop_score:
+            self.early_stop_score = score
+            self.early_stop_counter = 0
+            tqdm.write('保存模型')
+            self.model.save_pretrained(str(Path(self.training_config.output_dir) / 'best'))
+            return False
+        else:
+            self.early_stop_counter += 1
+            if self.early_stop_counter >= self.training_config.early_stop_patience:
+                return True
+            else:
+                return False
 
     def train(self):
         """训练数据"""
@@ -83,25 +107,23 @@ class train:
         current_step = 0
         dataloader = self._get_dataloader(self.train_dataset)
         for epoch in range(1,1+self.training_config.epochs):
-            print(f"epoch {epoch}/{self.training_config.eporchs}")
+            print(f"epoch {epoch}/{self.training_config.epochs}")
             for inputs in tqdm(dataloader, desc=f"Training Epoch {epoch}"):
                 loss = self.train_one_epoch(inputs)
                 current_step += 1
                 # tensorboard记录loss
                 self.writer.add_scalar('train/loss', loss, current_step)
-
-
-                # 验证评估
-                metrics = self.evaluate()
-                metrics_str = '| '.join([f"{k}: {v:.4f}" for k, v in metrics.items()])
-                tqdm.write(f"Step {current_step} | {metrics_str}")
-                # 早停
-                if self._should_early_stop(metrics):
-                    tqdm.write("早停")
-                    return
                 # 保存检查点
                 if current_step % self.training_config.save_steps == 0:
                     self.save_checkpoint()
+            # 验证评估
+            metrics = self.evaluate()
+            metrics_str = '| '.join([f"{k}: {v:.4f}" for k, v in metrics.items()])
+            tqdm.write(f"Step {current_step} | {metrics_str}")
+            # 早停
+            if self._should_stop(metrics):
+                tqdm.write("早停")
+                break
             self.step += 1
 
     
@@ -111,7 +133,10 @@ class train:
         loss = 0.0
         inputs = {k:v.to(self.device) for k,v in inputs.items()}
         # 添加混合精度
-        with torch.autocast(device_type='cuda', enabled=self.training_config.use_amp):
+        with torch.autocast(
+                device_type=self.device.type,
+                enabled=self.amp_enabled,
+        ):
             outputs = self.model(**inputs)
             loss = outputs.loss
         # 反向传播
@@ -125,6 +150,7 @@ class train:
     def save_checkpoint(self):
         """保存检查点"""
         checkpoint_path = Path(self.training_config.output_dir) / 'checkpoint.pt'
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         checkpoint = {
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -133,23 +159,28 @@ class train:
             'early_stop_counter': self.early_stop_counter,
             'scaler_state_dict': self.scaler.state_dict()
         }
-        torch.save(checkpoint, checkpoint_path)
+        # 使用文件对象，避免 torch 在 Windows 下处理中文路径失败
+        with checkpoint_path.open("wb") as file:
+            torch.save(checkpoint, file)
+
         print(f"Saved checkpoint to {checkpoint_path}")   
 
     def _load_checkpoint(self):
         """加载检查点"""
         checkpoint_path = Path(self.training_config.output_dir) / 'checkpoint.pt'
-        if checkpoint_path.exists():
-            checkpoint = torch.load(checkpoint_path)
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.step = checkpoint['step']
-            self.early_stop_score = checkpoint['early_stop_score']
-            self.early_stop_counter = checkpoint['early_stop_counter']
-            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
-            print(f"Loaded checkpoint from {checkpoint_path}")
-        else:
+        if not checkpoint_path.exists():
             print(f"No checkpoint found at {checkpoint_path}, starting from scratch.")
+            return
+        with checkpoint_path.open("rb") as file:
+            checkpoint = torch.load(file, map_location=self.device)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.step = checkpoint['step']
+        self.early_stop_score = checkpoint['early_stop_score']
+        self.early_stop_counter = checkpoint['early_stop_counter']
+        self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        print(f"Loaded checkpoint from {checkpoint_path}")
+
 
 
 
@@ -184,25 +215,28 @@ def train():
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
 
     # 数据集
-    train_dataset = dataset(config.train_file, tokenizer)
-    vaild_dataset = dataset(config.valid_file, tokenizer)
+    train_dataset = get_dataset('train')
+    valid_dataset = get_dataset('valid')
     collate_fn = DataCollatorWithPadding(tokenizer=tokenizer,padding = True, return_tensors='pt')
+    # 模型
+    with open(config.PROCESSED_DATA_DIR / 'labels.json','r',encoding='utf-8') as f:
+        all_labels = json.load(f)
 
     # 模型
-    id2label = {index:label for index, label in enumerate(config.labels)}
-    label2id = {label:index for index, label in enumerate(config.labels)}
+    id2label = {index:label for index, label in enumerate(all_labels)}
+    label2id = {label:index for index, label in enumerate(all_labels)}
 
-    model = AutoModelForSequenceClassification.from_pretrained(config.model_name, num_labels=len(config.labels), id2label=id2label, label2id=label2id)
+    model = AutoModelForSequenceClassification.from_pretrained(config.model_name, num_labels=len(all_labels), id2label=id2label, label2id=label2id)
 
-    def compute_metrics(self, preds, labels)->dict:
+    def compute_metrics( preds, labels)->dict:
         """计算评估指标"""
         accuracy = accuracy_score(labels, preds)
         f1 = f1_score(labels, preds, average='weighted')
         return {'accuracy': accuracy, 'f1': f1}
     training_config = TrainingConfig(
-        output_dir= config.MODELS_DIR,log_dir=config.LOGS_DIR
+        output_dir= config.MODELS_DIR,log_dir=config.LOG_DIR
     )
-    trainer = train(device=device, model=model, train_dataset=train_dataset, valid_dataset=vaild_dataset, collate_fn=collate_fn, compute_metrics=compute_metrics, training_config=training_config)  
+    trainer = Trainer(device=device, model=model, train_dataset=train_dataset, valid_dataset=valid_dataset, collate_fn=collate_fn, compute_metrics=compute_metrics, training_config=training_config)
     trainer.train()
 
 if __name__ == '__main__':

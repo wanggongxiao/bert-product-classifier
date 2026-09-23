@@ -18,3 +18,7 @@ PRE_TRAINED_DIR = ROOT_PATH / 'pretrained'             # 预训练模型目录
 
 # 预训练模型名称（用于 AutoTokenizer / AutoModel.from_pretrained）
 PRE_TRAINED_MODEL_NAME = 'bert-base-chinese'
+model_name = 'google-bert/bert-base-chinese'
+train_file = RAW_DATA_DIR / 'train.txt'
+valid_file = RAW_DATA_DIR / 'dev.txt'
+eporchs = 20
